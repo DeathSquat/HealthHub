@@ -2,15 +2,36 @@
 import { createClient } from '@supabase/supabase-js';
 import type { Database } from './types';
 
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
-const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+// Use environment variables
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string;
+const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string;
+
+if (!SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) {
+  throw new Error('Missing Supabase environment variables. Please check your .env file.');
+}
 
 // Import the supabase client like this:
 // import { supabase } from "@/integrations/supabase/client";
 
+// Clean up any old Supabase auth keys from previous projects to avoid stray refresh calls
+try {
+  const projectId = new URL(SUPABASE_URL).hostname.split('.')[0];
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (!key) continue;
+    if (key.startsWith('sb-') || key.includes('supabase')) {
+      // Remove keys not associated with current project URL hash (best-effort)
+      if (!key.includes(projectId)) {
+        localStorage.removeItem(key);
+      }
+    }
+  }
+} catch {}
+
 export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
   auth: {
     storage: localStorage,
+    // Enable persistence and refresh for proper login/sign-up on new project
     persistSession: true,
     autoRefreshToken: true,
   }

@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Bell, Plus, Trash2, Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import { supabase } from "@/integrations/supabase/client";
+// Local storage implementation (no Supabase)
 
 interface Reminder {
   id: string;
@@ -24,23 +24,15 @@ export const MedicineReminder = () => {
   useEffect(() => {
     fetchReminders();
     checkReminders();
-    const interval = setInterval(checkReminders, 60000); // Check every minute
+    const interval = setInterval(checkReminders, 5000); // Check every 5s for exact moment
     return () => clearInterval(interval);
   }, []);
 
   const fetchReminders = async () => {
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-
-      const { data, error } = await supabase
-        .from('medicine_reminders')
-        .select('*')
-        .eq('user_id', user.id)
-        .order('time');
-
-      if (error) throw error;
-      setReminders(data || []);
+      const raw = localStorage.getItem('hh_reminders');
+      const list: Reminder[] = raw ? JSON.parse(raw) : [];
+      setReminders(list);
     } catch (error) {
       console.error('Fetch reminders error:', error);
     }
@@ -49,9 +41,14 @@ export const MedicineReminder = () => {
   const checkReminders = () => {
     const now = new Date();
     const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-    
+    const todayKey = `${now.getFullYear()}-${now.getMonth()+1}-${now.getDate()}`;
+    const triggeredRaw = localStorage.getItem('hh_reminders_triggered');
+    const triggered: Record<string, string[]> = triggeredRaw ? JSON.parse(triggeredRaw) : {};
+    const todayList = new Set<string>(triggered[todayKey] || []);
+
     reminders.forEach(reminder => {
-      if (reminder.time === currentTime) {
+      const triggerKey = `${reminder.id}@${currentTime}`;
+      if (reminder.time === currentTime && !todayList.has(triggerKey)) {
         toast.info(`Time to take ${reminder.medicine_name}!`, {
           duration: 10000,
         });
@@ -62,6 +59,10 @@ export const MedicineReminder = () => {
             icon: '/favicon.ico'
           });
         }
+        // Mark triggered for today to avoid duplicates within the same minute
+        todayList.add(triggerKey);
+        triggered[todayKey] = Array.from(todayList);
+        localStorage.setItem('hh_reminders_triggered', JSON.stringify(triggered));
       }
     });
   };
@@ -76,22 +77,15 @@ export const MedicineReminder = () => {
 
     setLoading(true);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      
-      if (!user) {
-        toast.error("Please log in to set reminders");
-        return;
-      }
-
-      const { error } = await supabase
-        .from('medicine_reminders')
-        .insert({
-          user_id: user.id,
-          medicine_name: newReminder.medicineName,
-          time: newReminder.time
-        });
-
-      if (error) throw error;
+      const raw = localStorage.getItem('hh_reminders');
+      const list: Reminder[] = raw ? JSON.parse(raw) : [];
+      const newItem: Reminder = {
+        id: `${Date.now()}`,
+        medicine_name: newReminder.medicineName,
+        time: newReminder.time,
+      } as Reminder;
+      list.push(newItem);
+      localStorage.setItem('hh_reminders', JSON.stringify(list));
 
       toast.success("Reminder added successfully!");
       setNewReminder({ medicineName: "", time: "" });
@@ -110,13 +104,10 @@ export const MedicineReminder = () => {
 
   const handleDeleteReminder = async (id: string) => {
     try {
-      const { error } = await supabase
-        .from('medicine_reminders')
-        .delete()
-        .eq('id', id);
-
-      if (error) throw error;
-
+      const raw = localStorage.getItem('hh_reminders');
+      const list: Reminder[] = raw ? JSON.parse(raw) : [];
+      const next = list.filter((r) => r.id !== id);
+      localStorage.setItem('hh_reminders', JSON.stringify(next));
       toast.success("Reminder deleted");
       fetchReminders();
     } catch (error) {

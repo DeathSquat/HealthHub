@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
-import { Heart, LogOut, User } from "lucide-react";
+import { Heart, LogOut, User, PanelsTopLeft } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -37,6 +37,9 @@ export const Navbar = () => {
           </div>
 
           <div className="flex items-center gap-4">
+            <Button variant="ghost" size="sm" onClick={() => navigate('/role')}>
+              <PanelsTopLeft className="w-4 h-4 mr-2" /> Panels
+            </Button>
             {user ? (
               <>
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">

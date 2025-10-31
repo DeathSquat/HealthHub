@@ -4,6 +4,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Upload, FileText, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import { analyzeReportLocally } from "@/lib/analysis";
+import Tesseract from "tesseract.js";
+import * as pdfjsLib from "pdfjs-dist";
 
 export const UploadReports = () => {
   const [uploading, setUploading] = useState(false);
@@ -15,6 +18,55 @@ export const UploadReports = () => {
     }
   };
 
+  const extractTextFromFile = async (file: File): Promise<string> => {
+    // Plain text
+    if (file.type.startsWith('text/')) {
+      const text = await file.text();
+      return text || '';
+    }
+
+    // PDF using pdfjs
+    if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
+      try {
+        // Set worker (CDN) for pdfjs in browser context
+        // @ts-ignore
+        pdfjsLib.GlobalWorkerOptions.workerSrc =
+          'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.6.82/pdf.worker.min.js';
+
+        const arrayBuffer = await file.arrayBuffer();
+        // @ts-ignore
+        const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+        let fullText = '';
+        for (let i = 1; i <= pdf.numPages; i++) {
+          const page = await pdf.getPage(i);
+          const content = await page.getTextContent();
+          const strings = content.items.map((it: any) => it.str).join(' ');
+          fullText += strings + '\n';
+        }
+        return fullText.trim();
+      } catch (e) {
+        console.error('PDF OCR error:', e);
+        toast.error('Could not read PDF. Please try another file or paste text.');
+        return '';
+      }
+    }
+
+    // Images via OCR
+    if (file.type.startsWith('image/')) {
+      try {
+        const { data } = await Tesseract.recognize(file, 'eng');
+        return (data.text || '').trim();
+      } catch (e) {
+        console.error('Image OCR error:', e);
+        toast.error('Could not read image. Please try another file or paste text.');
+        return '';
+      }
+    }
+
+    toast.error('Unsupported file type. Please use PDF, image, or text file.');
+    return '';
+  };
+
   const handleUpload = async () => {
     if (!file) {
       toast.error("Please select a file first");
@@ -23,30 +75,75 @@ export const UploadReports = () => {
 
     setUploading(true);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      
-      if (!user) {
-        toast.error("Please log in to upload reports");
+      const text = await extractTextFromFile(file);
+      if (!text.trim()) {
+        setUploading(false);
         return;
       }
 
-      const fileExt = file.name.split('.').pop();
-      const filePath = `${user.id}/${Date.now()}.${fileExt}`;
+      try {
+        const { data, error } = await supabase.functions.invoke('analyze-report', {
+          body: { reportText: text }
+        });
+        if (error) throw error;
+        const rendered = String(data.analysis || '').trim();
+        if (!rendered) throw new Error('No analysis generated');
 
-      const { error: uploadError } = await supabase.storage
-        .from('medical-reports')
-        .upload(filePath, file);
+        localStorage.setItem('hh_last_analysis', rendered);
+        toast.success("Analysis complete! See AI Analysis section.");
 
-      if (uploadError) throw uploadError;
+        try {
+          const reportsRaw = localStorage.getItem('hh_reports');
+          const reports = reportsRaw ? JSON.parse(reportsRaw) : [];
+          const newReport = {
+            id: `${Date.now()}`,
+            createdAt: new Date().toISOString(),
+            patientName: null,
+            doctor: 'Assigned by AI',
+            problems: [],
+            analysis: rendered,
+            excerpt: text.slice(0, 500),
+          };
+          reports.unshift(newReport);
+          localStorage.setItem('hh_reports', JSON.stringify(reports));
+        } catch {}
+      } catch (_e) {
+        const local = analyzeReportLocally(text);
+        const rendered = `${local.patientName ? `Patient: ${local.patientName}\n\n` : ''}` +
+          `${local.findings.length ? `Findings:\n- ${local.findings.join("\n- ")}\n\n` : ''}` +
+          `Summary: ${local.summary}\n\n` +
+          `Tests Performed:\n- ${local.tests.join("\n- ")}\n\n` +
+          `Medications:\n- ${local.medications.join("\n- ")}\n\n` +
+          `Recommendations:\n- ${local.recommendations.join("\n- ")}`;
+        localStorage.setItem('hh_last_analysis', rendered);
+        toast.success("Analysis complete (offline dataset). See AI Analysis section.");
 
-      toast.success("Report uploaded successfully!");
+        try {
+          const reportsRaw = localStorage.getItem('hh_reports');
+          const reports = reportsRaw ? JSON.parse(reportsRaw) : [];
+          const newReport = {
+            id: `${Date.now()}`,
+            createdAt: new Date().toISOString(),
+            patientName: local.patientName || 'Patient',
+            doctor: 'General Practitioner',
+            problems: local.findings,
+            analysis: rendered,
+            excerpt: text.slice(0, 500),
+            tests: local.tests,
+            medications: local.medications,
+            recommendations: local.recommendations
+          };
+          reports.unshift(newReport);
+          localStorage.setItem('hh_reports', JSON.stringify(reports));
+        } catch {}
+      }
+
       setFile(null);
-      
       const fileInput = document.getElementById('file-upload') as HTMLInputElement;
       if (fileInput) fileInput.value = '';
     } catch (error) {
       console.error('Upload error:', error);
-      toast.error("Failed to upload report");
+      toast.error("Failed to process report");
     } finally {
       setUploading(false);
     }
@@ -73,7 +170,7 @@ export const UploadReports = () => {
                     id="file-upload"
                     type="file"
                     onChange={handleFileChange}
-                    accept=".pdf,.jpg,.jpeg,.png"
+                    accept=".txt,.pdf,.jpg,.jpeg,.png"
                     className="hidden"
                   />
                   <label 

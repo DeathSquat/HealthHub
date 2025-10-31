@@ -14,6 +14,47 @@ export type Database = {
   }
   public: {
     Tables: {
+      roles: {
+        Row: {
+          name: string
+        }
+        Insert: {
+          name: string
+        }
+        Update: {
+          name?: string
+        }
+        Relationships: []
+      }
+      user_roles: {
+        Row: {
+          id: string
+          local_user_id: string
+          role: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          local_user_id: string
+          role: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          local_user_id?: string
+          role?: string
+          created_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "user_roles_role_fkey"
+            columns: ["role"]
+            isOneToOne: false
+            referencedRelation: "roles"
+            referencedColumns: ["name"]
+          }
+        ]
+      }
       appointments: {
         Row: {
           appointment_date: string
